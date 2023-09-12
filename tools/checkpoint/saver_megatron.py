@@ -303,14 +303,14 @@ def save_checkpoint(queue, args):
             # Save them to the model
             for tp_rank in range(args.target_tensor_parallel_size):
                 l = models[tp_rank].language_model.encoder.layers[layer]
-                l.input_norm.weight.data.copy_(input_norm_weight)
+                l.input_layernorm.weight.data.copy_(input_norm_weight)
                 if norm_has_bias:
-                    l.input_norm.bias.data.copy_(input_norm_bias)
+                    l.input_layernorm.bias.data.copy_(input_norm_bias)
                 l.self_attention.query_key_value.weight.data.copy_(qkv_weight[tp_rank])
                 l.self_attention.dense.weight.data.copy_(dense_weight[tp_rank])
-                l.post_attention_norm.weight.data.copy_(post_norm_weight)
+                l.post_attention_layernorm.weight.data.copy_(post_norm_weight)
                 if norm_has_bias:
-                    l.post_attention_norm.bias.data.copy_(post_norm_bias)
+                    l.post_attention_layernorm.bias.data.copy_(post_norm_bias)
                 l.mlp.dense_h_to_4h.weight.data.copy_(mlp_l0_weight[tp_rank])
                 l.mlp.dense_4h_to_h.weight.data.copy_(mlp_l1_weight[tp_rank])
                 if md.linear_bias:
@@ -329,9 +329,9 @@ def save_checkpoint(queue, args):
             if norm_has_bias:
                 final_norm_bias = msg.pop("bias")
             for tp_rank in range(args.target_tensor_parallel_size):
-                models[tp_rank].language_model.encoder.final_norm.weight.data.copy_(final_norm_weight)
+                models[tp_rank].language_model.encoder.final_layernorm.weight.data.copy_(final_norm_weight)
                 if norm_has_bias:
-                    models[tp_rank].language_model.encoder.final_norm.bias.data.copy_(final_norm_bias)
+                    models[tp_rank].language_model.encoder.final_layernorm.bias.data.copy_(final_norm_bias)
                 if pp_rank != 0 and not md.output_layer:
                     # Copy word embeddings to final pipeline rank
                     models[tp_rank].word_embeddings.weight.data.copy_(out_word_embed[tp_rank])

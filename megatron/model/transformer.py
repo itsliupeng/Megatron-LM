@@ -568,7 +568,6 @@ class ParallelAttention(MegatronModule):
         # Query, Key, and Value
         # =====================
         if self.attention_type == AttnType.self_attn:
-
             # Attention heads [sq, b, h] --> [sq, b, ng * (np/ng + 2) * hn)]
             mixed_x_layer, _ = self.query_key_value(hidden_states)
 
@@ -776,7 +775,7 @@ class ParallelTransformerLayer(MegatronModule):
         self.fp32_residual_connection = config.fp32_residual_connection
 
         # Normalize the input data.
-        self.input_norm = get_norm(config)
+        self.input_layernorm = get_norm(config)
 
         # Self attention.
         self.self_attention = ParallelAttention(
@@ -789,7 +788,7 @@ class ParallelTransformerLayer(MegatronModule):
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0.0 else None
 
         # Normalize the attention output
-        self.post_attention_norm = get_norm(config)
+        self.post_attention_layernorm = get_norm(config)
 
         # Cross attention.
         if self.layer_type in (LayerType.decoder,
@@ -1050,7 +1049,7 @@ class ParallelTransformerLayer(MegatronModule):
         # hidden_states: [s, b, h]
 
         # Layer norm at the beginning of the transformer layer.
-        norm_output = self.input_norm(hidden_states)
+        norm_output = self.input_layernorm(hidden_states)
 
         # Self attention.
         attention_output, attention_bias = \
@@ -1094,7 +1093,7 @@ class ParallelTransformerLayer(MegatronModule):
             norm_input = residual + self.drop_path(out)
 
         # Layer norm post the self attention.
-        norm_output = self.post_attention_norm(norm_input)
+        norm_output = self.post_attention_layernorm(norm_input)
 
         # Cross attention.
         if self.layer_type == LayerType.encoder:
@@ -1482,7 +1481,7 @@ class ParallelTransformer(MegatronModule):
 
         if self.post_process and self.post_norm:
             # Final layer norm before output.
-            self.final_norm = get_norm(config)
+            self.final_layernorm = get_norm(config)
 
     def _get_layer(self, layer_number):
         return self.layers[layer_number]
@@ -1684,6 +1683,6 @@ class ParallelTransformer(MegatronModule):
 
         # Final layer norm.
         if self.post_process and self.post_norm:
-            hidden_states = self.final_norm(hidden_states)
+            hidden_states = self.final_layernorm(hidden_states)
 
         return hidden_states
