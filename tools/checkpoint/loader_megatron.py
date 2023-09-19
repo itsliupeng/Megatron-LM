@@ -62,7 +62,48 @@ def _load_checkpoint(queue, args):
     # Arguments do sanity checks on the world size, but we don't care,
     # so trick it into thinking we are plenty of processes
     margs.world_size = margs.tensor_model_parallel_size * margs.pipeline_model_parallel_size
+    
+    
+    # set llama2 args
+    
+    def load_llama_args(args):
+        # Read Llama args.
+        llama_args_path = os.path.join("/ML-A100/data/model/Llama-2-70b-hf-reed", "config.json")
+        with open(llama_args_path) as f:
+            llama_args = json.load(f)
 
+        # Update Megatron args.
+        args.seq_length = 4096
+        args.max_position_embeddings = 4096
+        args.hidden_size = llama_args["hidden_size"]
+        args.num_attention_heads = llama_args["num_attention_heads"]
+        args.num_layers = llama_args["num_hidden_layers"]
+        args.global_batch_size = 1024
+        args.norm_epsilon = llama_args["rms_norm_eps"]
+        args.iteration = 1 # '0', 'release' don't work
+        args.add_position_embedding = False
+        args.use_rotary_position_embeddings = True
+        args.swiglu = True
+        args.tokenizer_type = "Llama2Tokenizer"
+        args.normalization = "RMSNorm"
+        args.add_bias_linear = False
+        args.apply_query_key_layer_scaling = False
+        args.untie_embeddings_and_output_weights = True
+        args.vocab_size = llama_args["vocab_size"]
+        args.padded_vocab_size = llama_args["vocab_size"]
+        args.llama = llama_args
+        args.ffn_hidden_size = llama_args["intermediate_size"]
+        
+        args.fp16= False
+        args.bf16 = True
+
+        if "num_key_value_heads" in llama_args and llama_args["num_key_value_heads"] != llama_args["num_attention_heads"]:
+            args.group_query_attention = True
+            args.num_query_groups = llama_args["num_key_value_heads"]
+        
+        args.padded_vocab_size = 32768
+    
+    load_llama_args(margs)
     margs = validate_args(margs)
 
     def check_for_arg(arg_name, default=None):
@@ -82,7 +123,7 @@ def _load_checkpoint(queue, args):
     check_for_arg('seq_length')
     check_for_arg('num_attention_heads')
     check_for_arg('max_position_embeddings')
-    check_for_arg('position_embedding_type')
+    # check_for_arg('position_embedding_type')
     check_for_arg('tokenizer_type')
     check_for_arg('iteration')
     check_for_arg('bert_binary_head')
@@ -241,12 +282,12 @@ def _load_checkpoint(queue, args):
 
                 # Get non-parallel tensors from tp_rank 0
                 layer = models[0].language_model.encoder.layers[layer_num]
-                message["input norm weight"] = layer.input_norm.weight.data
+                message["input norm weight"] = layer.input_layernorm.weight.data
                 if norm_has_bias:
-                    message["input norm bias"] = layer.input_norm.bias.data
-                message["post norm weight"] = layer.post_attention_norm.weight.data
+                    message["input norm bias"] = layer.input_layernorm.bias.data
+                message["post norm weight"] = layer.post_attention_layernorm.weight.data
                 if norm_has_bias:
-                    message["post norm bias"] = layer.post_attention_norm.bias.data
+                    message["post norm bias"] = layer.post_attention_layernorm.bias.data
                 if md.linear_bias:
                     message["dense bias"] = layer.self_attention.dense.bias.data
                     message["mlp l1 bias"] = layer.mlp.dense_4h_to_h.bias.data
@@ -298,10 +339,10 @@ def _load_checkpoint(queue, args):
 
     # Send final norm from tp_rank 0
     message = {
-        "weight": models[0].language_model.encoder.final_norm.weight.data,
+        "weight": models[0].language_model.encoder.final_layernorm.weight.data,
     }
     if norm_has_bias:
-        message["bias"] = models[0].language_model.encoder.final_norm.bias.data
+        message["bias"] = models[0].language_model.encoder.final_layernorm.bias.data
     queue_put("final norm", message)
 
     if md.output_layer:

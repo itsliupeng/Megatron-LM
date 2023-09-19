@@ -235,7 +235,7 @@ def _load_checkpoint(queue, args):
 
     # Suppress warning about torch.distributed not being initialized.
     module.MegatronModule.embedding_warning_printed = True
-    set_global_variables(margs, build_tokenizer=True)
+    set_global_variables(margs, build_tokenizer=False)
     mpu.set_tensor_model_parallel_world_size(margs.tensor_model_parallel_size)
     mpu.set_pipeline_model_parallel_world_size(margs.pipeline_model_parallel_size)
     mpu.set_virtual_pipeline_model_parallel_world_size(margs.virtual_pipeline_model_parallel_size)
