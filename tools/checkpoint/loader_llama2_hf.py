@@ -57,22 +57,27 @@ def load_args_from_checkpoint(args):
     args.padded_vocab_size = llama_args["vocab_size"]
     args.llama = llama_args
     args.ffn_hidden_size = llama_args["intermediate_size"]
+    
+    args.fp16= False
+    args.bf16 = True
 
-    if "num_key_value_heads" in llama_args:
+    if "num_key_value_heads" in llama_args and llama_args["num_key_value_heads"] != llama_args["num_attention_heads"]:
         args.group_query_attention = True
         args.num_query_groups = llama_args["num_key_value_heads"]
 
 
 def set_preprocess_state(args, model, hf_model):
     '''Set embedding params.'''
-    model.language_model.embedding.word_embeddings.weight.data.copy_(
+    vocab_size =  hf_model.model.embed_tokens.weight.size(0)
+    model.language_model.embedding.word_embeddings.weight.data[:vocab_size].copy_(
         hf_model.model.embed_tokens.weight)
 
 
 def set_postprocess_state(args, model, hf_model):
     '''Set output layer & norm params.'''
-    model.language_model.encoder.final_norm.weight.data.copy_(hf_model.model.norm.weight)
-    model.language_model.output_layer.weight.data.copy_(hf_model.lm_head.weight)
+    model.language_model.encoder.final_layernorm.weight.data.copy_(hf_model.model.norm.weight)
+    vocab_size = hf_model.lm_head.weight.size(0)
+    model.language_model.output_layer.weight.data[:vocab_size].copy_(hf_model.lm_head.weight)
 
 
 def set_attn_state(args, layer, hf_layer):
@@ -120,8 +125,8 @@ def set_layer_state(args, model, hf_model, layer_idx):
 
     set_attn_state(args, layer, hf_layer)
     set_mlp_state(args, layer, hf_layer)
-    layer.input_norm.weight.data.copy_(hf_layer.input_layernorm.weight)
-    layer.post_attention_norm.weight.data.copy_(hf_layer.post_attention_layernorm.weight)
+    layer.input_layernorm.weight.data.copy_(hf_layer.input_layernorm.weight)
+    layer.post_attention_layernorm.weight.data.copy_(hf_layer.post_attention_layernorm.weight)
 
 
 def load_checkpoint_to_model(args):
@@ -134,6 +139,7 @@ def load_checkpoint_to_model(args):
     hf_model = LlamaForCausalLM.from_pretrained(args.load, device_map="cpu")
 
     # Init Megatron model.
+    args.padded_vocab_size = 32768
     model = model_provider(True, True).to(args.params_dtype)
 
     # Set model state.
@@ -213,7 +219,7 @@ def _load_checkpoint(queue, args):
     check_for_arg('seq_length')
     check_for_arg('num_attention_heads')
     check_for_arg('max_position_embeddings')
-    check_for_arg('position_embedding_type')
+    # check_for_arg('position_embedding_type')
     check_for_arg('tokenizer_type')
     check_for_arg('iteration')
     check_for_arg('bert_binary_head')
@@ -224,10 +230,11 @@ def _load_checkpoint(queue, args):
     # Determine how to make our models.
     assert args.model_type == 'GPT', 'Llama-2 is a GPT model.'
     margs.model_type = ModelType.encoder_or_decoder
+    
+    # margs.padded_vocab_size = True
 
     # Suppress warning about torch.distributed not being initialized.
     module.MegatronModule.embedding_warning_printed = True
-
     set_global_variables(margs, build_tokenizer=False)
     mpu.set_tensor_model_parallel_world_size(margs.tensor_model_parallel_size)
     mpu.set_pipeline_model_parallel_world_size(margs.pipeline_model_parallel_size)
@@ -293,8 +300,8 @@ def _load_checkpoint(queue, args):
 
         # Get non-parallel tensors from tp_rank 0.
         layer = model.language_model.encoder.layers[layer_num]
-        message["input norm weight"] = layer.input_norm.weight.data
-        message["post norm weight"] = layer.post_attention_norm.weight.data
+        message["input norm weight"] = layer.input_layernorm.weight.data
+        message["post norm weight"] = layer.post_attention_layernorm.weight.data
         if md.linear_bias:
             message["dense bias"] = layer.self_attention.dense.bias.data
             message["mlp l1 bias"] = layer.mlp.dense_4h_to_h.bias.data
@@ -343,7 +350,7 @@ def _load_checkpoint(queue, args):
 
     # Send final norm from tp_rank 0.
     message = {
-        "weight": model.language_model.encoder.final_norm.weight.data,
+        "weight": model.language_model.encoder.final_layernorm.weight.data,
     }
     queue_put("final norm", message)
 
